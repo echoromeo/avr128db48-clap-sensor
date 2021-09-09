@@ -25,10 +25,22 @@
  *  THAT YOU HAVE PAID DIRECTLY TO MICROCHIP FOR THIS SOFTWARE.
  */
 
+#define F_CPU 24000000ul
+
 #include <avr/io.h>
 
 int main(void)
 {
+	OPAMP_init();
+	ADC_init();
+	RTC_init();
+
+	while(1) {
+	}
+}
+
+void OPAMP_init(void) {
+
 	// Set up the timebase of the OPAMP peripheral
 	OPAMP.TIMEBASE = 3; // Number of CLK_PER cycles that equal one us, minus one (4-1=3)
 	
@@ -46,6 +58,21 @@ int main(void)
 	
 	// Enable the OPAMP peripheral
 	OPAMP.CTRLA = OPAMP_ENABLE_bm;
+	
+}
 
-	while(1);
+void ADC_init(void) {
+}
+
+void RTC_init(void) {
+}
+
+ISR(ADC0_RESRDY_vect) {
+}
+
+
+ISR(ADC0_WCMP_vect) {
+}
+
+ISR(RTC_PIT_vect) {
 }
