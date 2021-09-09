@@ -13,7 +13,7 @@
     <OutputFileExtension>.elf</OutputFileExtension>
     <OutputDirectory>$(MSBuildProjectDirectory)\$(Configuration)</OutputDirectory>
     <AssemblyName>avr128db48-low-bom-mic-interface-using-opamp</AssemblyName>
-    <Name>avr128db48-low-bom-mic-interface-using-opamp</Name>
+    <Name>avr128db48-clap-sensor</Name>
     <RootNamespace>avr128db48-low-bom-mic-interface-using-opamp</RootNamespace>
     <ToolchainFlavour>Native</ToolchainFlavour>
     <KeepTimersRunning>true</KeepTimersRunning>
