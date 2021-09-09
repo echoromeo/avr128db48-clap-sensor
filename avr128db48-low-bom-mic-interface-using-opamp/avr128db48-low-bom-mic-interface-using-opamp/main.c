@@ -28,6 +28,26 @@
 #define F_CPU 24000000ul
 
 #include <avr/io.h>
+#include <avr/interrupt.h>
+
+#include <stdlib.h>
+
+#define RUNNING_AVERAGE 16
+#define ADC_THRESHOLD_UPDATE 50 //No idea
+#define CLAP_TIMEOUT 20000 //No idea
+#define CLAP_TIMEIN 1000 //No idea
+
+uint16_t timestamp = 0;
+uint16_t clap_ts = 0;
+uint8_t we_have_a_clap = 0;
+
+uint16_t adc_array[256] = {0};
+uint8_t adc_idx = 0;
+uint16_t adc_average = 0;
+
+void OPAMP_init(void);
+void ADC_init(void);
+void RTC_init(void);
 
 int main(void)
 {
@@ -38,6 +58,12 @@ int main(void)
 	RTC_init();
 
 	while(1) {
+		if (we_have_a_clap)
+		{
+			// Do something!
+			
+			we_have_a_clap = 0;
+		}
 	}
 }
 
@@ -64,17 +90,62 @@ void OPAMP_init(void) {
 }
 
 void ADC_init(void) {
+	// Set up the ADC in window mode with interrupt
+	
+	// Trigger the ADC from PIT event
+
 }
 
 void RTC_init(void) {
+	// Init the PIT with interrupt
 }
 
 ISR(ADC0_RESRDY_vect) {
+	// Calculate running average to get noise floor?
+	adc_array[adc_idx++] = ADC0.RES;
+	
+	int32_t new_adc_average = 0;
+	// This should wrap around nicely?
+	for (uint8_t i = adc_idx - RUNNING_AVERAGE; i != adc_idx; i++)
+	{
+		new_adc_average += adc_array[i];
+	}
+	new_adc_average /= RUNNING_AVERAGE;
+	
+	// Update window threshold if change larger than?
+	if (abs(new_adc_average - adc_average) > ADC_THRESHOLD_UPDATE)
+	{
+		adc_average = new_adc_average;
+		ADC0.WINHT = adc_average + ADC_THRESHOLD_UPDATE*3; //No idea
+	}
+	
+	// Clear interrupt
+	ADC0.INTFLAGS = ADC_RESRDY_bm;
 }
 
 
 ISR(ADC0_WCMP_vect) {
+	// Clap detected, remove latest sample?
+	adc_idx--;
+	
+	// If timein < t2-t1 < timeout, we have double clap
+	uint16_t clap_diff = timestamp - clap_ts; 
+	if ((clap_diff <= CLAP_TIMEOUT) && (clap_diff > CLAP_TIMEIN))
+	{
+		we_have_a_clap = 1;
+	}
+		
+	// else log t1
+	clap_ts = timestamp;
+
+	// Clear interrupt
+	ADC0.INTFLAGS = ADC_WCMP_bm;
 }
 
 ISR(RTC_PIT_vect) {
+	// Increment "timestamp"
+	timestamp++;
+	
+	// Clear interrupt
+	RTC.PITINTFLAGS = RTC_PI_bm;
 }
