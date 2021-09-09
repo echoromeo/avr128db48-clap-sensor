@@ -53,9 +53,15 @@ int main(void)
 {
 	_PROTECTED_WRITE(CLKCTRL.OSCHFCTRLA, CLKCTRL_FRQSEL_24M_gc);
 	
+	// Init peripherals
 	OPAMP_init();
 	ADC_init();
 	RTC_init();
+
+	// Cofigure sleep
+	
+	// Enable interrupts
+	sei();
 
 	while(1) {
 		if (we_have_a_clap)
@@ -64,6 +70,8 @@ int main(void)
 			
 			we_have_a_clap = 0;
 		}
+		
+		// Go to sleep
 	}
 }
 
