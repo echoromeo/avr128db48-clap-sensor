@@ -31,6 +31,8 @@
 
 int main(void)
 {
+	_PROTECTED_WRITE(CLKCTRL.OSCHFCTRLA, CLKCTRL_FRQSEL_24M_gc);
+	
 	OPAMP_init();
 	ADC_init();
 	RTC_init();
@@ -42,7 +44,7 @@ int main(void)
 void OPAMP_init(void) {
 
 	// Set up the timebase of the OPAMP peripheral
-	OPAMP.TIMEBASE = 3; // Number of CLK_PER cycles that equal one us, minus one (4-1=3)
+	OPAMP.TIMEBASE = (F_CPU*0.000001)-1; // Number of CLK_PER cycles that equal one us, minus one (4-1=3)
 	
 	//Make OP0 an inverting PGA with gain of -15
 	OPAMP.OP0INMUX = OPAMP_OP0INMUX_MUXPOS_VDDDIV2_gc | OPAMP_OP0INMUX_MUXNEG_WIP_gc;
