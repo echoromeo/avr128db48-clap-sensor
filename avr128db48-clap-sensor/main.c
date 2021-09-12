@@ -29,21 +29,27 @@
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <avr/sleep.h>
 
 #include <stdlib.h>
 
-#define RUNNING_AVERAGE 16
-#define ADC_THRESHOLD_UPDATE 50 //No idea
-#define CLAP_TIMEOUT 20000 //No idea
-#define CLAP_TIMEIN 1000 //No idea
+#define ADC_RUNNING_AVERAGE 32
+#define ADC_THRESHOLD_UPDATE 100
+#define ADC_MAX_THRESHOLD (ADC_THRESHOLD_UPDATE*25)
+#define ADC_MIN_THRESHOLD (ADC_THRESHOLD_UPDATE*3)
+#define CLAP_TIMEOUT ((3*32768/2)/256) // 1.5 seconds?
+#define CLAP_TIMEIN ((32768/8)/256) // 0.125 seconds? 
 
-uint16_t timestamp = 0;
-uint16_t clap_ts = 0;
+uint16_t current_ts = 0;
+uint16_t clap_ts = 0xffff/2;
+uint16_t clap_to = CLAP_TIMEOUT;
 uint8_t we_have_a_clap = 0;
 
-uint16_t adc_array[256] = {0};
+int16_t adc_array[256] = {0};
 uint8_t adc_idx = 0;
-uint16_t adc_average = 0;
+int16_t adc_average = 0;
+
+int16_t max = 0;
 
 void OPAMP_init(void);
 void ADC_init(void);
@@ -55,23 +61,29 @@ int main(void)
 	
 	// Init peripherals
 	OPAMP_init();
-	ADC_init();
 	RTC_init();
+	ADC_init();
+	PORTB.DIRSET = PIN3_bm; //CNANO LED
 
-	// Cofigure sleep
+	// Configure sleep
+	set_sleep_mode(SLEEP_MODE_IDLE);
 	
 	// Enable interrupts
+	CPUINT.CTRLA = CPUINT_LVL0RR_bm;
+	CPUINT.LVL1VEC = RTC_PIT_vect_num;
 	sei();
 
 	while(1) {
 		if (we_have_a_clap)
 		{
 			// Do something!
+			PORTB.OUTTGL = PIN3_bm;
 			
 			we_have_a_clap = 0;
 		}
 		
 		// Go to sleep
+		sleep_mode();
 	}
 }
 
@@ -82,7 +94,7 @@ void OPAMP_init(void) {
 	
 	//Make OP0 an inverting PGA with gain of -15
 	OPAMP.OP0INMUX = OPAMP_OP0INMUX_MUXPOS_VDDDIV2_gc | OPAMP_OP0INMUX_MUXNEG_WIP_gc;
-	OPAMP.OP0RESMUX = OPAMP_OP0RESMUX_MUXBOT_INN_gc | OPAMP_OP0RESMUX_MUXWIP_WIP7_gc | OPAMP_OP0RESMUX_MUXTOP_OUT_gc;
+	OPAMP.OP0RESMUX = OPAMP_OP0RESMUX_MUXBOT_INN_gc | OPAMP_OP0RESMUX_MUXWIP_WIP6_gc | OPAMP_OP0RESMUX_MUXTOP_OUT_gc;
 	// Configure OP0 Control A
 	OPAMP.OP0CTRLA = OPAMP_OP0CTRLA_OUTMODE_NORMAL_gc | OPAMP_ALWAYSON_bm;
 	
@@ -98,34 +110,64 @@ void OPAMP_init(void) {
 }
 
 void ADC_init(void) {
-	// Set up the ADC in window mode with interrupt
-	
-	// Trigger the ADC from PIT event
+	// Get VDD/2 on the DAC
+	VREF.DAC0REF = VREF_REFSEL_VDD_gc;
+	DAC0.CTRLA = DAC_ENABLE_bm;
+	DAC0.DATA = 0x1ff << DAC_DATA_gp; // VDD/2
 
+	// Set up the ADC in window mode with interrupt
+	VREF.ADC0REF = VREF_REFSEL_2V048_gc;    // With differential we are ok with 2V reference?
+	ADC0.CTRLA = ADC_CONVMODE_bm | ADC_FREERUN_bm | ADC_ENABLE_bm; // Differential?
+	ADC0.CTRLB = ADC_SAMPNUM_ACC8_gc; // 12bit * 16 = 16bit
+//	ADC0.CTRLC = ADC_PRESC_DIV24_gc; // 1 MHz is ok?
+	ADC0.CTRLC = ADC_PRESC_DIV48_gc; // 0.5 MHz is ok?
+	ADC0.CTRLD = ADC_INITDLY_DLY128_gc | ADC_SAMPDLY_DLY10_gc; // Qualified guess
+	ADC0.CTRLE = ADC_WINCM_ABOVE_gc;
+	ADC0.SAMPCTRL = 0x10;
+	ADC0.MUXPOS = ADC_MUXPOS_AIN5_gc; // OP1OUT
+	ADC0.MUXNEG = ADC_MUXNEG_DAC0_gc; // VDD/2
+	ADC0.INTCTRL = ADC_WCMP_bm | ADC_RESRDY_bm;
+//	ADC0.INTCTRL = ADC_WCMP_bm;
+	ADC0.WINHT = ADC_MAX_THRESHOLD;
+	ADC0.WINLT = ADC_MIN_THRESHOLD;
+	ADC0.COMMAND = ADC_STCONV_bm;
 }
 
 void RTC_init(void) {
 	// Init the PIT with interrupt
+	while(RTC.STATUS);
+	RTC.CLKSEL = RTC_CLKSEL_OSC32K_gc;
+	RTC.PITINTCTRL = RTC_PI_bm;
+	RTC.PITCTRLA = RTC_PERIOD_CYC256_gc | RTC_PITEN_bm; // ~128 Hz ok?
 }
 
 ISR(ADC0_RESRDY_vect) {
 	// Calculate running average to get noise floor?
 	adc_array[adc_idx++] = ADC0.RES;
+
+	if ((int16_t) ADC0.RES > max)
+	{
+		max = ADC0.RES;
+	}
 	
 	int32_t new_adc_average = 0;
 	// This should wrap around nicely?
-	for (uint8_t i = adc_idx - RUNNING_AVERAGE; i != adc_idx; i++)
+	for (uint8_t i = adc_idx - ADC_RUNNING_AVERAGE; i != adc_idx; i++)
 	{
 		new_adc_average += adc_array[i];
 	}
-	new_adc_average /= RUNNING_AVERAGE;
+	new_adc_average /= ADC_RUNNING_AVERAGE;
+	
+	// If differential: consider adjusting the DAC instead?
 	
 	// Update window threshold if change larger than?
 	if (abs(new_adc_average - adc_average) > ADC_THRESHOLD_UPDATE)
 	{
 		adc_average = new_adc_average;
-		ADC0.WINHT = adc_average + ADC_THRESHOLD_UPDATE*3; //No idea
+		ADC0.WINHT = adc_average + ADC_MAX_THRESHOLD;
+		ADC0.WINLT = adc_average + ADC_MIN_THRESHOLD;
 	}
+	
 	
 	// Clear interrupt
 	ADC0.INTFLAGS = ADC_RESRDY_bm;
@@ -133,18 +175,38 @@ ISR(ADC0_RESRDY_vect) {
 
 
 ISR(ADC0_WCMP_vect) {
-	// Clap detected, remove latest sample?
-	adc_idx--;
-	
-	// If timein < t2-t1 < timeout, we have double clap
-	uint16_t clap_diff = timestamp - clap_ts; 
-	if ((clap_diff <= CLAP_TIMEOUT) && (clap_diff > CLAP_TIMEIN))
+
+	if ((int16_t) ADC0.RES > max)
 	{
-		we_have_a_clap = 1;
+		max = ADC0.RES;
 	}
-		
-	// else log t1
-	clap_ts = timestamp;
+	
+	if (ADC0.CTRLE == ADC_WINCM_ABOVE_gc)
+	{
+		// Swap interrupt trigger to avoid retrigger on high level
+		ADC0.CTRLE = ADC_WINCM_BELOW_gc;
+
+		// Clap detected, remove latest sample?
+//		adc_idx--;
+	
+		// If timein < t2-t1 < timeout, we have double clap
+		uint16_t clap_diff = current_ts - clap_ts;
+		if ((clap_diff <= CLAP_TIMEOUT) && (clap_diff > CLAP_TIMEIN))
+		{
+			if (!clap_to)
+			{
+				we_have_a_clap = 1;
+				clap_to = CLAP_TIMEOUT;
+			}
+		}
+
+		// log when the first clap was
+		clap_ts = current_ts;
+	} 
+	else { // ADC0.CTRLE == ADC_WINCM_BELOW_gc
+		// Swap interrupt trigger to avoid retrigger on low level
+		ADC0.CTRLE = ADC_WINCM_ABOVE_gc;
+	}
 
 	// Clear interrupt
 	ADC0.INTFLAGS = ADC_WCMP_bm;
@@ -152,7 +214,11 @@ ISR(ADC0_WCMP_vect) {
 
 ISR(RTC_PIT_vect) {
 	// Increment "timestamp"
-	timestamp++;
+	current_ts++;
+	if (clap_to)
+	{
+		clap_to--;
+	}
 	
 	// Clear interrupt
 	RTC.PITINTFLAGS = RTC_PI_bm;
