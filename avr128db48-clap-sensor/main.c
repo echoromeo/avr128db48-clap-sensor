@@ -51,6 +51,7 @@ typedef struct control_type
 
 control_t control = {
 	.clap_type = DOUBLE_CLAP,
+//	.clap_type = SINGLE_CLAP,
 	.run_average = true,
 };
 

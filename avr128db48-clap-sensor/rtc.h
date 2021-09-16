@@ -14,9 +14,9 @@
 #include <stdbool.h>
 
 #define PIT_PERIOD_gc RTC_PERIOD_CYC256_gc // ~128 Hz?
-#define PIT_TICKS_PER_SEC (32768ul/((PIT_PERIOD_gc>>RTC_PERIOD_gp)+1))
+#define PIT_TICKS_PER_SEC (32768ul >> ((PIT_PERIOD_gc >> RTC_PERIOD_gp) + 1))
 
-#define DEFAULT_CLAP_TIMEOUT (PIT_TICKS_PER_SEC) // 1 seconds
+#define DEFAULT_CLAP_TIMEOUT (PIT_TICKS_PER_SEC/2) // 0.5 seconds
 #define DEFAULT_CLAP_DEBOUNCE (PIT_TICKS_PER_SEC/10) // 0.1 seconds
 
 void RTC_init(void);
