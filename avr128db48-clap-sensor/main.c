@@ -46,7 +46,7 @@ typedef enum {
 typedef struct control_type 
 {
 	clap_t clap_type;
-	uint8_t run_average;
+	bool run_average;
 } control_t;
 
 control_t control = {
@@ -65,7 +65,7 @@ int main(void)
 	RTC_init();
 	ADC_init();
 
-	DEBUG_init();
+	DEBUG_pin_init();
 	LED_init();
 	LED_off();
 
@@ -76,12 +76,16 @@ int main(void)
 	sei();
 
 	while(1) {
-		if (clap)
+		if (clap_detected)
 		{
+			clap_detected = false;
 			if (control.clap_type == SINGLE_CLAP)
 			{
-				// Do something!
-				LED_on();
+				if (is_singleclap())
+				{
+					// Do something!
+					LED_on();
+				}
 			}
 			else if (control.clap_type == DOUBLE_CLAP)
 			{
@@ -91,8 +95,10 @@ int main(void)
 					LED_on();
 				}
 			}
-
-			clap = false;
+		} else if (is_timedout())
+		{
+			// Do something!
+			LED_off();
 		}
 
 		if (control.run_average)

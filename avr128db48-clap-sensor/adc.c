@@ -1,14 +1,14 @@
 /*
  * adc.c
  *
- * Created: 14/09/21 11:19:45
- *  Author: M43977
+ * Created: 14/09/21 01:19:45
+ * Author: echoromeo
  */ 
 
 #include "main.h"
 #include "adc.h"
 
-bool clap = false;
+volatile bool clap_detected = false;
 int16_t adc_array[256] = {0};
 uint8_t adc_idx = 0;
 
@@ -41,6 +41,7 @@ void ADC_init(void) {
 	ADC0.COMMAND = ADC_STCONV_bm;
 }
 
+
 int16_t running_average(uint8_t samples) {
 	static volatile uint8_t loop_adc_idx = 0;
 	static volatile int16_t adc_average = 0;
@@ -49,7 +50,7 @@ int16_t running_average(uint8_t samples) {
 	if (loop_adc_idx != adc_idx) {
 		
 		#ifdef DEBUG
-		DEBUG_ADC_AVG_high();
+		DEBUG_pin_ADC_AVG_high();
 
 		if ((int16_t) ADC0.RES > max)
 		{
@@ -86,7 +87,7 @@ int16_t running_average(uint8_t samples) {
 			max_avg = adc_average;
 		}
 
-		DEBUG_ADC_AVG_low();
+		DEBUG_pin_ADC_AVG_low();
 		#endif // Debug
 	}
 
@@ -94,20 +95,18 @@ int16_t running_average(uint8_t samples) {
 }
 
 
-
-
 ISR(ADC0_RESRDY_vect) {
-	DEBUG_ADC_ISR_high();
+	DEBUG_pin_ADC_ISR_high();
 
 	// Compare triggered?
 	if (ADC0.INTFLAGS & ADC_WCMP_bm)
 	{
-		DEBUG_ADC_WCOMP_high();
+		DEBUG_pin_ADC_WCOMP_high();
 		
 		// Above threshold, we have a clap!
 		if (ADC0.CTRLE == ADC_WINCM_ABOVE_gc)
 		{
-			clap = true;
+			clap_detected = true;
 
 			// Swap interrupt trigger to avoid retrigger on high level
 			ADC0.CTRLE = ADC_WINCM_BELOW_gc;
@@ -120,13 +119,13 @@ ISR(ADC0_RESRDY_vect) {
 		// Clear interrupts
 		ADC0.INTFLAGS = ADC_WCMP_bm | ADC_RESRDY_bm;
 
-		DEBUG_ADC_WCOMP_low();
+		DEBUG_pin_ADC_WCOMP_low();
 	} else {
 		// Add sample to running average calculation
 		// Also clears both interrupts..
 		adc_array[adc_idx++] = ADC0.RES;
 	}
 
-	DEBUG_ADC_ISR_low();
+	DEBUG_pin_ADC_ISR_low();
 }
 

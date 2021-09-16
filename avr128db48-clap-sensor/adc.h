@@ -1,8 +1,8 @@
 /*
  * adc.h
  *
- * Created: 14/09/21 11:20:02
- *  Author: M43977
+ * Created: 14/09/21 01:20:02
+ * Author: echoromeo
  */ 
 
 
@@ -19,7 +19,7 @@
 #define ADC_MAX_THRESHOLD (ADC_THRESHOLD_UPDATE*25)
 #define ADC_MIN_THRESHOLD (ADC_THRESHOLD_UPDATE*3)
 
-extern bool clap;
+extern volatile bool clap_detected;
 
 void ADC_init(void);
 int16_t running_average(uint8_t samples);
