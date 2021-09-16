@@ -37,19 +37,22 @@
 #define ADC_THRESHOLD_UPDATE 100
 #define ADC_MAX_THRESHOLD (ADC_THRESHOLD_UPDATE*25)
 #define ADC_MIN_THRESHOLD (ADC_THRESHOLD_UPDATE*3)
-#define CLAP_TIMEOUT ((3*32768/2)/256) // 1.5 seconds?
-#define CLAP_TIMEIN ((32768/8)/256) // 0.125 seconds? 
 
-uint16_t current_ts = 0;
-uint16_t clap_ts = 0xffff/2;
-uint16_t clap_to = CLAP_TIMEOUT;
+#define PIT_TICKS_PER_SEC (32768ul/256ul)
+#define CLAP_TIMEOUT (PIT_TICKS_PER_SEC) // 1 seconds
+#define CLAP_TIMEIN (PIT_TICKS_PER_SEC/10) // 0.1 seconds 
+
+uint16_t initialclap_to = 0;
+uint16_t doubleclap_to = CLAP_TIMEOUT;
 uint8_t we_have_a_clap = 0;
 
 int16_t adc_array[256] = {0};
 uint8_t adc_idx = 0;
-int16_t adc_average = 0;
 
+#ifdef DEBUG
+int16_t max_avg = 0;
 int16_t max = 0;
+#endif // Debug
 
 void OPAMP_init(void);
 void ADC_init(void);
@@ -64,22 +67,93 @@ int main(void)
 	RTC_init();
 	ADC_init();
 	PORTB.DIRSET = PIN3_bm; //CNANO LED
+	PORTB.OUTSET = PIN3_bm; //CNANO LED
 
 	// Configure sleep
 	set_sleep_mode(SLEEP_MODE_IDLE);
 	
+	// Debug
+#ifdef DEBUG
+	PORTA.DIR = 0xff;
+	PORTA.OUT = 0;
+#endif // Debug
+	
 	// Enable interrupts
-	CPUINT.CTRLA = CPUINT_LVL0RR_bm;
 	CPUINT.LVL1VEC = RTC_PIT_vect_num;
 	sei();
 
+	uint8_t loop_adc_idx = 0;
+	int16_t adc_average = 0;
 	while(1) {
 		if (we_have_a_clap)
 		{
-			// Do something!
-			PORTB.OUTTGL = PIN3_bm;
-			
 			we_have_a_clap = 0;
+
+			// Check if timeout from last double clap
+			if (!doubleclap_to)
+			{
+				// If initial clap timeout == 0 we have first clap!
+				if (!initialclap_to)
+				{
+					// Start countdown to acceptable first clap
+					initialclap_to = CLAP_TIMEOUT;
+				}
+				// We have second clap inside the window!
+				else if (initialclap_to < (CLAP_TIMEOUT - CLAP_TIMEIN))
+				 {
+					// Start countdown to not allow series clapping
+					doubleclap_to = CLAP_TIMEOUT;
+
+					// Is clearing this enough to not allow series clapping?
+					initialclap_to = 0;
+
+					// Do something!
+					PORTB.OUTCLR = PIN3_bm; //CNANO LED
+				}
+			}
+		}
+
+		// Calculate running average to move threshold with noise floor
+		if (loop_adc_idx != adc_idx) {
+		
+#ifdef DEBUG
+			PORTA.OUTSET = PIN5_bm;
+
+			if ((int16_t) ADC0.RES > max)
+			{
+				max = ADC0.RES;
+			}
+#endif // Debug
+
+			// In case adc_idx has increased more than 1 since last
+			loop_adc_idx = adc_idx - 1;
+	
+			int32_t new_adc_average = 0;
+			// This should wrap around nicely?
+			for (uint8_t i = loop_adc_idx - ADC_RUNNING_AVERAGE; i != loop_adc_idx; i++)
+			{
+				new_adc_average += abs(adc_array[i]);
+			}
+			new_adc_average /= ADC_RUNNING_AVERAGE;
+	
+			// Update window threshold if change larger than?
+			if (abs(new_adc_average - adc_average) > ADC_THRESHOLD_UPDATE)
+			{
+				adc_average = new_adc_average/2;
+				ADC0.WINHT = adc_average + ADC_MAX_THRESHOLD;
+				ADC0.WINLT = adc_average + ADC_MIN_THRESHOLD;
+			}
+
+			loop_adc_idx++;
+
+#ifdef DEBUG
+			if (adc_average > max_avg)
+			{
+				max_avg = adc_average;
+			}
+
+			PORTA.OUTCLR = PIN5_bm;
+#endif // Debug
 		}
 		
 		// Go to sleep
@@ -94,7 +168,7 @@ void OPAMP_init(void) {
 	
 	//Make OP0 an inverting PGA with gain of -15
 	OPAMP.OP0INMUX = OPAMP_OP0INMUX_MUXPOS_VDDDIV2_gc | OPAMP_OP0INMUX_MUXNEG_WIP_gc;
-	OPAMP.OP0RESMUX = OPAMP_OP0RESMUX_MUXBOT_INN_gc | OPAMP_OP0RESMUX_MUXWIP_WIP6_gc | OPAMP_OP0RESMUX_MUXTOP_OUT_gc;
+	OPAMP.OP0RESMUX = OPAMP_OP0RESMUX_MUXBOT_INN_gc | OPAMP_OP0RESMUX_MUXWIP_WIP7_gc | OPAMP_OP0RESMUX_MUXTOP_OUT_gc;
 	// Configure OP0 Control A
 	OPAMP.OP0CTRLA = OPAMP_OP0CTRLA_OUTMODE_NORMAL_gc | OPAMP_ALWAYSON_bm;
 	
@@ -126,8 +200,7 @@ void ADC_init(void) {
 	ADC0.SAMPCTRL = 0x10;
 	ADC0.MUXPOS = ADC_MUXPOS_AIN5_gc; // OP1OUT
 	ADC0.MUXNEG = ADC_MUXNEG_DAC0_gc; // VDD/2
-	ADC0.INTCTRL = ADC_WCMP_bm | ADC_RESRDY_bm;
-//	ADC0.INTCTRL = ADC_WCMP_bm;
+	ADC0.INTCTRL = ADC_RESRDY_bm; // ISR handles both RESRDY and WCMP
 	ADC0.WINHT = ADC_MAX_THRESHOLD;
 	ADC0.WINLT = ADC_MIN_THRESHOLD;
 	ADC0.COMMAND = ADC_STCONV_bm;
@@ -142,84 +215,67 @@ void RTC_init(void) {
 }
 
 ISR(ADC0_RESRDY_vect) {
-	// Calculate running average to get noise floor?
-	adc_array[adc_idx++] = ADC0.RES;
+#ifdef DEBUG
+	PORTA.OUTSET = PIN2_bm;
+#endif // Debug
 
-	if ((int16_t) ADC0.RES > max)
+	// Compare triggered?
+	if (ADC0.INTFLAGS & ADC_WCMP_bm)
 	{
-		max = ADC0.RES;
-	}
+#ifdef DEBUG
+		PORTA.OUTSET = PIN3_bm;
+#endif // Debug
 	
-	int32_t new_adc_average = 0;
-	// This should wrap around nicely?
-	for (uint8_t i = adc_idx - ADC_RUNNING_AVERAGE; i != adc_idx; i++)
-	{
-		new_adc_average += adc_array[i];
-	}
-	new_adc_average /= ADC_RUNNING_AVERAGE;
-	
-	// If differential: consider adjusting the DAC instead?
-	
-	// Update window threshold if change larger than?
-	if (abs(new_adc_average - adc_average) > ADC_THRESHOLD_UPDATE)
-	{
-		adc_average = new_adc_average;
-		ADC0.WINHT = adc_average + ADC_MAX_THRESHOLD;
-		ADC0.WINLT = adc_average + ADC_MIN_THRESHOLD;
-	}
-	
-	
-	// Clear interrupt
-	ADC0.INTFLAGS = ADC_RESRDY_bm;
-}
-
-
-ISR(ADC0_WCMP_vect) {
-
-	if ((int16_t) ADC0.RES > max)
-	{
-		max = ADC0.RES;
-	}
-	
-	if (ADC0.CTRLE == ADC_WINCM_ABOVE_gc)
-	{
-		// Swap interrupt trigger to avoid retrigger on high level
-		ADC0.CTRLE = ADC_WINCM_BELOW_gc;
-
-		// Clap detected, remove latest sample?
-//		adc_idx--;
-	
-		// If timein < t2-t1 < timeout, we have double clap
-		uint16_t clap_diff = current_ts - clap_ts;
-		if ((clap_diff <= CLAP_TIMEOUT) && (clap_diff > CLAP_TIMEIN))
+		// Above threshold, we have a clap!
+		if (ADC0.CTRLE == ADC_WINCM_ABOVE_gc)
 		{
-			if (!clap_to)
-			{
-				we_have_a_clap = 1;
-				clap_to = CLAP_TIMEOUT;
-			}
+			we_have_a_clap = 1;
+
+			// Swap interrupt trigger to avoid retrigger on high level
+			ADC0.CTRLE = ADC_WINCM_BELOW_gc;
+		}
+		else { // ADC0.CTRLE == ADC_WINCM_BELOW_gc
+			// Back below threshold, reset interrupt trigger
+			ADC0.CTRLE = ADC_WINCM_ABOVE_gc;
 		}
 
-		// log when the first clap was
-		clap_ts = current_ts;
-	} 
-	else { // ADC0.CTRLE == ADC_WINCM_BELOW_gc
-		// Swap interrupt trigger to avoid retrigger on low level
-		ADC0.CTRLE = ADC_WINCM_ABOVE_gc;
+		// Clear interrupts
+		ADC0.INTFLAGS = ADC_WCMP_bm | ADC_RESRDY_bm;
+
+#ifdef DEBUG
+		PORTA.OUTCLR = PIN3_bm;
+#endif // Debug
+	} else {
+		// Add sample to running average calculation
+		// Also clears both interrupts..	
+		adc_array[adc_idx++] = ADC0.RES;		
 	}
 
-	// Clear interrupt
-	ADC0.INTFLAGS = ADC_WCMP_bm;
+#ifdef DEBUG
+	PORTA.OUTCLR = PIN2_bm;
+#endif // Debug
 }
 
 ISR(RTC_PIT_vect) {
-	// Increment "timestamp"
-	current_ts++;
-	if (clap_to)
-	{
-		clap_to--;
+#ifdef DEBUG
+	PORTA.OUTSET = PIN4_bm;
+#endif // Debug
+
+	// Decrement timeouts
+	if (initialclap_to) {
+		initialclap_to--;
 	}
+	if (doubleclap_to) {
+		doubleclap_to--;
+	} else {
+		PORTB.OUTSET = PIN3_bm; //CNANO LED
+	}
+	
 	
 	// Clear interrupt
 	RTC.PITINTFLAGS = RTC_PI_bm;
+	
+#ifdef DEBUG
+	PORTA.OUTCLR = PIN4_bm;
+#endif // Debug
 }
